@@ -1,0 +1,258 @@
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="initial-scale=1, maximum-scale=1,user-scalable=no">
+  <title>Tzipi_Sidel_AS.430.600.81.SU20_final</title>
+  <style>
+    html, body, #viewDiv {
+      padding: 0;
+      margin: 0;
+      height: 100%;
+      width: 100%;
+    }
+    #infoDiv {
+      background-color: green;
+      color: black;
+      padding: 20px;
+      width: 300px;
+    }
+    #results {
+      font-weight: bolder;
+      }
+  </style>
+  <link rel="stylesheet" href="https://js.arcgis.com/4.9/esri/css/main.css">
+  <script src="https://js.arcgis.com/4.8/"></script>
+  <script>
+    require([
+      "esri/Map",
+      "esri/views/MapView",
+      "esri/layers/FeatureLayer",
+      "esri/widgets/Legend",
+      "esri/layers/GraphicsLayer",
+      "esri/geometry/geometryEngine",
+      "esri/Graphic",
+      "esri/widgets/Home",
+      "dojo/domReady!"
+    ], function(Map,  MapView, FeatureLayer, Legend, GraphicsLayer,
+        geometryEngine,Graphic, Home) 
+	{
+        // create a select droplist 
+        var layer_names = ["POI"];
+        var distanceSlider = document.getElementById("distance");
+        var queryObservations = document.getElementById("find_animals");
+        var poiBuffer, poiGeometries;
+	    //add layers to map
+		const map = new Map({
+			basemap: "hybrid",
+			showLabels : true
+		});
+
+		const view = new MapView({
+			container: "viewDiv",
+			map: map,
+			center:[-121.3880, 52.5797],
+			zoom: 8
+		});
+         view.ui.add("infoDiv", "bottom-left");
+		const labelClass = {
+          // autocasts as new LabelClass()
+          symbol: {
+            type: "text", // autocasts as new TextSymbol()
+            color: "white",
+            font: {
+              size: 12,
+              weight: "bold"
+            }
+          },
+          labelPlacement: "above-center",
+          labelExpressionInfo: {expression: "$feature.Name"}
+        };
+        // get Layers
+        const poi = new FeatureLayer(
+		{
+			portalItem: {
+		      id:"88652fa60e8f4ecd85be914927aada18"
+			},
+		    layerId: 0,
+			outFields:["*"],
+            visible: true,
+			popupTemplate: { 
+				title: "POI: {NAME}"
+            },
+			labelingInfo: [labelClass],
+		});
+		
+		
+        const obsLayer = new FeatureLayer({
+          portalItem:{
+            id:"272b39f40ca7489a9166ada79fca8bfc"
+          },
+          title: "Wild Animals Observations",
+          outFields: ["*"],
+          visible: false,
+          popupTemplate: { 
+            title: "Wild Animals Observations:",
+			content:"<ul><li>Animal Type: {animal_type}</li>"+
+			  "<li> REPORT DATE: {CreationDate}</li><ul>"
+          }
+        });
+		
+        const resultsLayer = new GraphicsLayer();
+        map.addMany([poi, obsLayer, resultsLayer])
+		
+        const homeBtn = new Home({
+            view: view
+        });
+        view.ui.add(homeBtn,"top-left", 2);
+        
+        view.when(function () {
+            return poi.when(function () {
+             var query = poi.createQuery();
+              return poi.queryFeatures(query);
+            });
+          })
+		  .then(queryForPoiGeometries)
+          .then(createBuffer);
+        
+        function queryForPoiGeometries() 
+        {
+          var poiQuery = poi.createQuery();
+
+          return poi.queryFeatures(poiQuery)
+            .then(function (response) {
+              poiGeometries = response.features.map(function (feature) {
+                return feature.geometry;
+              });
+              return poiGeometries;
+            });
+        }
+        function createBuffer(PoiPoints) {
+          console.log("Calculate Buffers");
+          var bufferDistance = parseInt(distanceSlider.value);
+          var PoiBuffers = geometryEngine.geodesicBuffer(PoiPoints, [bufferDistance], "kilometers",
+            true);
+          PoiBuffer = PoiBuffers[0];
+
+          // add the buffer to the view as a graphic
+          var bufferGraphic = new Graphic({
+            geometry: PoiBuffer,
+            symbol: {
+              type: "simple-fill", // autocasts as new SimpleFillSymbol()
+              outline: {
+                width: 1.5,
+                color: [255, 128, 0, 0.5]
+              },
+              style: "none"
+            }
+          });
+          view.graphics.removeAll();
+          view.graphics.add(bufferGraphic);
+        }
+
+        
+        distanceSlider.addEventListener("input", function () {
+          document.getElementById("distance-value").innerText = distanceSlider.value;
+        });
+        // create a buffer around the queried geometries
+        distanceSlider.addEventListener("change", function () {
+          createBuffer(poiGeometries);
+        });
+        queryObservations.addEventListener("click", function () {
+          if (parseInt(distanceSlider.value) == 0)
+              clearResults();
+          else
+          {
+            findAnimals()
+                .then(displayResults);
+          }
+        });
+
+        function findAnimals() {
+          var query = obsLayer.createQuery();
+          query.where = "BearCount > 0 OR BissonCount > 0 OR ElkCount > 0 OR BissonCount > 0";
+          query.geometry = PoiBuffer;
+          query.spatialRelationship = "intersects";
+          return obsLayer.queryFeatures(query);
+        }
+
+        // display the animals query results in the
+        // view and print the number of results to the DOM
+        function displayResults(results) {
+          resultsLayer.removeAll();
+          var features = results.features.map(function (graphic) {
+            graphic.symbol = {
+              type: "simple-marker", // autocasts as new SimpleMarkerSymbol()
+              style: "diamond",
+              size: 6.5,
+              color: "darkorange"
+            };
+            return graphic;
+          });
+          resultsLayer.addMany(features);
+          //summary
+          var bear = sum_bear(features);
+          var moose = sum_moose(features);
+          var elk =   sum_elk(features);
+		  var bisson = sum_bisson(features);
+
+          document.getElementById("results").innerHTML = 
+          "<ui><li>Bear Observations: " + bear+"</li>"+
+          "<li>Moose Observations: " + moose+"</li>"+
+		  "<li>Elk Observations: " + elk+"</li>"+
+          "<li>Bisson Observations: " + bisson+"</li></ul>";
+        }
+        // display the observation query results in the
+        // view and print the number of results to the DOM
+        function clearResults() {
+          resultsLayer.removeAll();
+          document.getElementById("results").innerHTML = "";
+        }
+        function sum_bear(features) {
+            var bear_count = 0;
+            for (var x = 0; x < features.length; x++) {
+                bear_count = bear_count + features[x].attributes['BearCount'];
+            }
+            return bear_count;
+        }
+        function sum_bisson(features) {
+            var bisson_count = 0;
+            for (var x = 0; x < features.length; x++) {
+                bisson_count = bisson_count + features[x].attributes['BissonCount'];
+            }
+            return bisson_count;
+        }
+        function sum_elk(features) {
+            var elk_count = 0;
+            for (var x = 0; x < features.length; x++) {
+                elk_count = elk_count + features[x].attributes['ElkCount'];
+            }
+            return elk_count;
+        }
+		function sum_moose(features) {
+            var moose_count = 0;
+            for (var x = 0; x < features.length; x++) {
+                moose_count = moose_count + features[x].attributes['MooseCount'];
+            }
+            return moose_count;
+        }
+    });
+  </script>
+</head>
+<body >
+  <div id="viewDiv"></div>
+  <div style="background-color:white" padding=6px width=300px id="infoDiv">
+  <br><br> Wild Animals Count Near POI:
+	<br><br>
+	<br> Use The Slider To Select Buffer Distance
+	<br> (Select 0 Km to restart)
+    <br> Distance Buffer:
+    <input id="distance" type="range" min="0" max="100" step="1" value="0">&nbsp;
+    <span id="distance-value">0</span> Km
+    <br><br>
+    <button id="find_animals">Push Button To Get Counts</button>
+    <br><br>
+     <div id="results"></div>
+    <br><br>
+  </div>
+</body>
+</html>
